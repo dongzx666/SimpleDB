@@ -1,0 +1,15 @@
+#
+# Standard Maven .gitignore
+#
+target/
+lib/
+
+#
+# IntelliJ
+#
+*.iml
+.idea/*
+!.idea/runConfigurations/
+
+
+.DS_Store
