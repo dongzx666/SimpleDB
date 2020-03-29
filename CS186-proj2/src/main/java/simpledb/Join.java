@@ -14,12 +14,8 @@ public class Join extends Operator {
     private DbIterator child1;
     private DbIterator child2;
     private TupleDesc td;
-    private Iterator<Tuple> tupleIterator = null;
-    private static final int BLOCK_MEMORY = 131072 * 5;
-    private List<Tuple> tuples;
-    private Tuple[] leftTuples;
-    private Tuple[] rightTuples;
-
+    private Tuple tuple1;
+    private Tuple tuple2;
     /**
      * Constructor. Accepts to children to join and the predicate to join them
      * on
@@ -79,7 +75,6 @@ public class Join extends Operator {
         super.open();
         this.child1.open();
         this.child2.open();
-        tupleIterator = this.getTuples();
     }
 
     public void close() {
@@ -87,14 +82,12 @@ public class Join extends Operator {
         super.close();
         this.child1.close();
         this.child2.close();
-        tupleIterator = null;
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
         // some code goes here
         this.child1.rewind();
         this.child2.rewind();
-        tupleIterator = this.getTuples();
     }
 
     /**
@@ -117,242 +110,38 @@ public class Join extends Operator {
      */
     // 有三种Join算法, NLJ(Nested Loop Join), Hash Join, Sort-Merge Join
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
-        // some code goes here
-        if (tupleIterator == null) return null;
-        Tuple tp = null;
-        if (tupleIterator.hasNext()) {
-            tp = tupleIterator.next();
+        if (child1.hasNext() && tuple1 == null) {
+            tuple1 = child1.next();
         }
-        return tp;
-    }
-
-    public Iterator<Tuple> getTuples () throws TransactionAbortedException, DbException {
-        int tpsize1 = this.child1.getTupleDesc().numFields();
-        int tpsize2 = this.child2.getTupleDesc().numFields();
-        tuples = new ArrayList<Tuple>();
-
-        int leftTupleBufferSize = this.BLOCK_MEMORY / child1.getTupleDesc().getSize();
-        int rightTupleBufferSize = this.BLOCK_MEMORY / child2.getTupleDesc().getSize();
-
-        this.leftTuples = new Tuple[leftTupleBufferSize];
-        this.rightTuples = new Tuple[rightTupleBufferSize];
-
-        int leftIndex = 0, rightIndex = 0;
-
-        // 处理顺序, 左满1-N & (右满1-N, 右剩余), 左剩余 & (右满1-N, 右剩余)
-        while (this.child1.hasNext()) {
-            this.leftTuples[leftIndex++] = this.child1.next();
-            if (leftIndex < leftTupleBufferSize) continue; // 一直把左缓冲读满
-
-            this.traverseRight(leftIndex, rightIndex, rightTupleBufferSize);
-
-            // 重置左缓冲
-            leftIndex = 0;
-            this.child2.rewind();
-        }
-
-        if (leftIndex != 0) {
-            this.traverseRight(leftIndex, rightIndex, rightTupleBufferSize);
-        }
-
-        return tuples.iterator();
-    }
-
-    private void traverseRight (int leftIndex, int rightIndex, int rightTupleBufferSize) throws TransactionAbortedException, DbException {
-        while (this.child2.hasNext()) {
-            this.rightTuples[rightIndex++] = this.child2.next();
-            if (rightIndex < rightTupleBufferSize) continue; // 一直把右缓冲读满
-
-            // 这时左右缓冲都满了，需要做一次join
-            this.getJoin(leftIndex, rightIndex);
-            rightIndex = 0; // 重置右缓冲，继续读值
-        }
-
-        // 处理右缓冲还有数据的情况
-        if (rightIndex != 0) {
-            this.getJoin(leftIndex, rightIndex);
-            rightIndex = 0;
-        }
-    }
-
-    private void getJoin (int leftSize, int rightSize) {
-        if (leftSize == 0 || rightSize == 0) return;
-        Arrays.sort(this.leftTuples, 0, leftSize, new cmp(this.p.getField1()));
-        Arrays.sort(this.rightTuples, 0, rightSize, new cmp(this.p.getField2()));
-        switch (this.p.getOperator()) {
-            case EQUALS:
-                handleEq(leftSize, rightSize);
-                break;
-            case GREATER_THAN:
-            case GREATER_THAN_OR_EQ:
-                handleGreate(leftSize, rightSize);
-                break;
-            case LESS_THAN:
-            case LESS_THAN_OR_EQ:
-                handleLess(leftSize, rightSize);
-                break;
-        }
-    }
-
-    private void handleEq (int l, int r) {
-//        int left = 0, right = 0;
-//        JoinPredicate greatThan = new JoinPredicate(p.getField1(), Predicate.Op.GREATER_THAN, p.getField2());
-//        JoinPredicate lessThan = new JoinPredicate(p.getField1(), Predicate.Op.LESS_THAN, p.getField2());
-
-//        boolean equalFlag = true;
-//        int leftFlag = 0;
-//
-//        while (left < l && right < r) {
-//            Tuple ltp = leftTuples[left];
-//            Tuple rtp = rightTuples[right];
-//
-//            if (p.filter(ltp, rtp)){
-//                if (equalFlag) {
-//                    leftFlag = left;
-//                    equalFlag = !equalFlag;
-//                }
-//                Tuple tp = mergeJoinTuple(ltp, rtp);
-//                tuples.add(tp);
-//                left++;
-//
-//                if (right < r && left >= l) {
-//                    right++;
-//                    left = leftFlag;
-//                    equalFlag = !equalFlag;
-//                }
-//
-//            } else if (greatThan.filter(ltp, rtp)){
-//                right++;
-//                left = leftFlag;
-//                equalFlag = !equalFlag;
-//            } else {
-//                left++;
-//            }
-//        }
-
-//        int mark = -1;
-
-        for (int i = 0; i < l; i++) {
-            Tuple ltp = this.leftTuples[i];
-            for (int j = 0; j < r; j++) {
-                Tuple rtp = this.rightTuples[j];
-                if (p.filter(ltp, rtp)) tuples.add(this.mergeJoinTuple(ltp, rtp));
-            }
-        }
-
-//        while (left < l && right < r) {
-//            Tuple ltp = this.leftTuples[left];
-//            Tuple rtp = this.rightTuples[right];
-//
-//            if (p.filter(ltp, rtp)) {
-//                tuples.add(this.mergeJoinTuple(ltp, rtp));
-//            }
-//
-//
-//            if (mark == -1) {
-//                while (lessThan.filter(this.leftTuples[left], this.rightTuples[right])) ++left;
-//                while (greatThan.filter(this.leftTuples[left], this.rightTuples[right])) ++right;
-//                mark = right;
-//            }
-//            if (p.filter(this.leftTuples[left], this.rightTuples[right])) {
-//                Tuple res = this.mergeJoinTuple(this.leftTuples[left], this.rightTuples[right]);
-//                ++right;
-//                this.tuples.add(res);
-//            } else {
-//                right = mark;
-//                ++left;
-//                mark = -1;
-//            }
-//        }
-
-    }
-    private void handleGreate (int l, int r) {
-        int left = 0, right = 0;
-
-        while (left < l && right < r) {
-            Tuple ltp = this.leftTuples[left];
-            Tuple rtp = this.rightTuples[right];
-
-            if (this.p.filter(ltp, rtp)) {
-                for (int i = right; i < r; i++) {
-                    Tuple rtpiml = this.rightTuples[i];
-                    Tuple tp = this.mergeJoinTuple(ltp, rtpiml);
-                    this.tuples.add(tp);
+        while (tuple1 != null) {
+            while (child2.hasNext()) {
+                tuple2 = child2.next();
+                if (p.filter(tuple1, tuple2)) {
+                    Tuple tuple = new Tuple(this.td);
+                    Iterator<Field> field1 = tuple1.Fields();
+                    Iterator<Field> field2 = tuple2.Fields();
+                    int index = 0;
+                    while (field1.hasNext()) {
+                        tuple.setField(index, field1.next());
+                        index++;
+                    }
+                    while (field2.hasNext()) {
+                        tuple.setField(index, field2.next());
+                        index++;
+                    }
+                    return tuple;
                 }
-                left++;
+            }
+            if (child1.hasNext()) {
+                tuple1 = child1.next();
             } else {
-                right++;
+                tuple1 = null;
             }
+            child2.rewind();
         }
-    }
-    private void handleLess (int l, int r) {
-        int left = 0, right = 0;
-
-        while (left < l && right < r) {
-            Tuple ltp = this.leftTuples[left];
-            Tuple rtp = this.rightTuples[right];
-
-            if (this.p.filter(ltp, rtp)) {
-                for (int i = right; i < r; i++) {
-                    Tuple rtpiml = this.rightTuples[i];
-                    Tuple tp = this.mergeJoinTuple(ltp, rtpiml);
-                    this.tuples.add(tp);
-                }
-                left++;
-            } else {
-                right++;
-            }
-        }
+        return null;
     }
 
-    class cmp implements Comparator<Tuple> {
-        private JoinPredicate jp;
-
-
-        public cmp (int field) {
-            super();
-            switch (p.getOperator()) {
-                case EQUALS:
-                    jp = new JoinPredicate(field, Predicate.Op.GREATER_THAN, field);
-                    break;
-                case GREATER_THAN:
-                case GREATER_THAN_OR_EQ:
-                    jp = new JoinPredicate(field, Predicate.Op.LESS_THAN, field);
-                    break;
-                case LESS_THAN:
-                case LESS_THAN_OR_EQ:
-                    jp = new JoinPredicate(field, Predicate.Op.GREATER_THAN, field);
-                    break;
-            }
-        }
-
-        @Override
-        public int compare(Tuple t1, Tuple t2) {
-            if (jp.filter(t1, t2)) {
-                return 1;
-            } else if (jp.filter(t2, t1)) {
-                return -1;
-            } else {
-                return 0;
-            }
-        }
-    }
-
-    private Tuple mergeJoinTuple (Tuple tp1, Tuple tp2) {
-        int tpSize1 = tp1.getTupleDesc().numFields();
-        int tpSize2 = tp2.getTupleDesc().numFields();
-
-        Tuple tp = new Tuple(this.getTupleDesc());
-        int i = 0;
-        for (; i < tpSize1; i++) {
-            tp.setField(i, tp1.getField(i));
-        }
-        for (; i < tpSize1 + tpSize2; i++) {
-            tp.setField(i, tp2.getField(i - tpSize1));
-        }
-
-        return tp;
-    }
 
     @Override
     public DbIterator[] getChildren() {

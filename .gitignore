@@ -9,8 +9,6 @@ doc/
 # IntelliJ
 #
 *.iml
-.idea/*
-!.idea/runConfigurations/
-
+.idea/
 
 .DS_Store
